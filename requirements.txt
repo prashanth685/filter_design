@@ -1,0 +1,5 @@
+PyQt5
+numpy
+paho-mqtt
+pyqtgraph
+matlabplotlib

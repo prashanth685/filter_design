@@ -1,8 +1,6 @@
 import numpy as np
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QTableWidget, QTableWidgetItem, QPushButton, QHBoxLayout
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QPushButton, QHBoxLayout, QComboBox, QLabel
 from PyQt5.QtCore import QObject, QEvent, Qt
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QHBoxLayout, QSpacerItem, QSizePolicy
-
 from pyqtgraph import PlotWidget, mkPen, AxisItem, InfiniteLine, SignalProxy
 from datetime import datetime
 import time
@@ -46,15 +44,14 @@ class TimeViewFeature:
         self.channel_times = []
         self.tacho_times = []
         self.sample_rate = 4096
-        self.num_channels = 4
+        self.num_channels = 2  # Only Channel 1 and 2
         self.scaling_factor = 3.3 / 65535
-        self.num_plots = 6  # Channels 1-4, tacho freq, tacho trigger, removed Bode plots
+        self.num_plots = 3  # Channel 1, Channel 2, Tacho Frequency
         self.channel_samples = 4096
         self.tacho_samples = 4096
         self.vlines = []
         self.proxies = []
         self.trackers = []
-        self.trigger_lines = []
         self.active_line_idx = None
         self.peak_to_peak_ch2 = None
         self.peak_to_peak_per_cycle = []
@@ -66,6 +63,9 @@ class TimeViewFeature:
         self.start_button = None
         self.stop_button = None
         self.last_tacho_freq = None
+        self.y_range_buttons = []
+        self.auto_adjust = False
+        self.freq_range_combo = None
 
         self.initUI()
 
@@ -74,10 +74,10 @@ class TimeViewFeature:
         self.widget = QWidget()
         layout = QVBoxLayout()
         
-        # Add MQTT control buttons
-        button_layout = QHBoxLayout()
-        button_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
+        # Add control panel
+        control_layout = QHBoxLayout()
         
+        # MQTT buttons
         self.start_button = QPushButton("Start MQTT")
         self.start_button.setFixedSize(100, 50)
         self.start_button.setStyleSheet("""
@@ -89,7 +89,7 @@ class TimeViewFeature:
             }
         """)
         self.start_button.clicked.connect(self.start_mqtt)
-        button_layout.addWidget(self.start_button)
+        control_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop MQTT")
         self.stop_button.setFixedSize(100, 50)
@@ -101,40 +101,57 @@ class TimeViewFeature:
                 font-size: 16px;
             }
         """)
-        button_layout.addWidget(self.stop_button)
-        self.setLayout(button_layout)
+        self.stop_button.clicked.connect(self.stop_mqtt)
+        control_layout.addWidget(self.stop_button)
 
+        # Y-range control buttons
+        y_range_label = QLabel("Y-Range:")
+        control_layout.addWidget(y_range_label)
+        
+        fixed_3v_button = QPushButton("Fixed 3V")
+        fixed_3v_button.setFixedSize(80, 30)
+        fixed_3v_button.clicked.connect(lambda: self.set_y_range(fixed=True))
+        control_layout.addWidget(fixed_3v_button)
+        self.y_range_buttons.append(fixed_3v_button)
 
-        # self.start_button = QPushButton("Start MQTT")
-        # self.start_button.clicked.connect(self.start_mqtt)
-        # self.stop_button = QPushButton("Stop MQTT")
-        # self.stop_button.clicked.connect(self.stop_mqtt)
-        # self.stop_button.setEnabled(False)
-        # button_layout.addWidget(self.start_button)
-        # button_layout.addWidget(self.stop_button)
-        # layout.addLayout(button_layout)
+        auto_button = QPushButton("Auto Adjust")
+        auto_button.setFixedSize(80, 30)
+        auto_button.clicked.connect(lambda: self.set_y_range(fixed=False))
+        control_layout.addWidget(auto_button)
+        self.y_range_buttons.append(auto_button)
+
+        # Frequency range selection
+        freq_label = QLabel("Freq Range (Hz):")
+        control_layout.addWidget(freq_label)
+        
+        self.freq_range_combo = QComboBox()
+        self.freq_range_combo.addItems(["100", "200", "500", "1000"])
+        self.freq_range_combo.setFixedSize(80, 30)
+        self.freq_range_combo.currentTextChanged.connect(self.update_freq_range)
+        control_layout.addWidget(self.freq_range_combo)
+
+        control_layout.addStretch()
+        layout.addLayout(control_layout)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
 
-        colors = ['r', 'g', 'b', 'y', 'c', 'm']
+        colors = ['r', 'g', 'b']
         for i in range(self.num_plots):
-            axis_items = {'bottom': TimeAxisItem(orientation='bottom')} if i < self.num_channels + 2 else None
+            axis_items = {'bottom': TimeAxisItem(orientation='bottom')}
             plot_widget = PlotWidget(axisItems=axis_items, background='w')
             plot_widget.setFixedHeight(250)
             plot_widget.setMinimumWidth(0)
             if i < self.num_channels:
-                plot_widget.setLabel('left', f'CH{i+1} Value')
+                plot_widget.setLabel('left', f'CH{i+1} Value (V)')
+                plot_widget.setYRange(0, 3.0, padding=0)  # Default 0-3V
             elif i == self.num_channels:
-                plot_widget.setLabel('left', 'Tacho Frequency')
-            elif i == self.num_channels + 1:
-                plot_widget.setLabel('left', 'Tacho Trigger')
-                plot_widget.setYRange(-0.5, 1.5, padding=0)
+                plot_widget.setLabel('left', 'Tacho Frequency (Hz)')
             plot_widget.showGrid(x=True, y=True)
             plot_widget.addLegend()
-            pen = mkPen(color=colors[i % len(colors)], width=2)
+            pen = mkPen(color=colors[i], width=2)
             plot = plot_widget.plot([], [], pen=pen, name=f'Plot {i+1}')
             self.plots.append(plot)
             self.plot_widgets.append(plot_widget)
@@ -145,11 +162,6 @@ class TimeViewFeature:
             plot_widget.addItem(vline)
             self.vlines.append(vline)
 
-            if i == self.num_plots - 1 or i == self.num_plots - 2:
-                self.trigger_lines = []
-            else:
-                self.trigger_lines.append(None)
-
             proxy = SignalProxy(plot_widget.scene().sigMouseMoved, rateLimit=60, slot=lambda evt, idx=i: self.mouse_moved(evt, idx))
             self.proxies.append(proxy)
 
@@ -159,11 +171,13 @@ class TimeViewFeature:
 
             scroll_layout.addWidget(plot_widget)
 
-        # Add new plot for Vrms vs Frequency
+        # Add Vrms vs Frequency plot
         vrms_plot = PlotWidget(background='w')
         vrms_plot.setFixedHeight(250)
         vrms_plot.setLabel('left', 'Vrms (V)')
         vrms_plot.setLabel('bottom', 'Frequency (Hz)')
+        vrms_plot.setXRange(0, 1000, padding=0)  # Default 0-1000Hz
+        vrms_plot.setYRange(0, 4.0, padding=0)  # Fixed 0-4V
         vrms_plot.showGrid(x=True, y=True)
         vrms_plot.addLegend()
         pen = mkPen(color='b', width=2)
@@ -258,6 +272,20 @@ class TimeViewFeature:
             self.console.append_to_console("MQTT subscription stopped.")
         logging.debug("MQTT subscription stopped.")
 
+    def set_y_range(self, fixed=True):
+        """Set y-range for channel plots: fixed 3V or auto adjust."""
+        self.auto_adjust = not fixed
+        for i in range(self.num_channels):
+            if fixed:
+                self.plot_widgets[i].setYRange(0, 3.0, padding=0)
+            else:
+                self.plot_widgets[i].enableAutoRange(axis='y')
+
+    def update_freq_range(self, range_text):
+        """Update frequency range for Vrms plot."""
+        max_freq = float(range_text)
+        self.plot_widgets[self.num_plots-1].setXRange(0, max_freq, padding=0)
+
     def on_data_received(self, tag_name, model_name, values, sample_rate):
         """Handle incoming MQTT data, update plots."""
         if not self.mqtt_running:
@@ -289,11 +317,10 @@ class TimeViewFeature:
                     return
 
             tacho_freq_samples = len(values[4])
-            tacho_trigger_samples = len(values[5])
-            if tacho_freq_samples != self.tacho_samples or tacho_trigger_samples != self.tacho_samples:
-                logging.warning(f"Tacho data length mismatch: freq={tacho_freq_samples}, trigger={tacho_trigger_samples}, expected={self.tacho_samples}")
+            if tacho_freq_samples != self.tacho_samples:
+                logging.warning(f"Tacho freq data length mismatch: {tacho_freq_samples}, expected={self.tacho_samples}")
                 if self.console:
-                    self.console.append_to_console(f"Tacho data length mismatch: freq={tacho_freq_samples}, trigger={tacho_trigger_samples}")
+                    self.console.append_to_console(f"Tacho freq data length mismatch: {tacho_freq_samples}")
                 return
 
             current_time = time.time()
@@ -307,112 +334,78 @@ class TimeViewFeature:
                 self.data[ch] = np.array(values[ch][:self.channel_samples]) * self.scaling_factor
                 logging.debug(f"Channel {ch+1} data: {len(self.data[ch])} samples, scaled with factor {self.scaling_factor}")
 
-            # Assign tacho data without scaling
+            # Assign tacho frequency data
             self.data[self.num_channels] = np.array(values[4][:self.tacho_samples]) / 100
-            self.data[self.num_channels + 1] = np.array(values[5][:self.tacho_samples])
             logging.debug(f"Tacho freq data: {len(self.data[self.num_channels])} samples")
-            logging.debug(f"Tacho trigger data: {len(self.data[self.num_channels + 1])} samples, first 10: {self.data[self.num_channels + 1][:10]}")
 
             # Calculate metrics for channel 2
             if len(self.data[1]) > 0:
                 self.peak_to_peak_ch2 = np.max(self.data[1]) - np.min(self.data[1])
                 logging.debug(f"Channel 2 Peak-to-Peak (Entire Array): {self.peak_to_peak_ch2:.4f} V")
                 if self.console:
-                    self.console.append_to_console(f"Channel 2 Peak-to-Peak (Entire Array): {self.peak_to_peak_ch2:.4f} V")
+                    self.console.append(f"Channel 2 Peak-to-Peak (Entire Array): {self.peak_to_peak_ch2:.4f} V")
 
                 self.custom_magnitude_ch2 = self.calculate_custom_magnitude(self.data[1])
-                logging.debug(f"Channel 2 Custom Magnitude (Entire Array): {self.custom_magnitude_ch2:.4f} V")
+                logging.debug(f"Channel 2 Custom Magnitude: {self.custom_magnitude_ch2:.4f} V")
                 if self.console:
-                    self.console.append_to_console(f"Channel 2 Custom Magnitude (Entire Array): {self.custom_magnitude_ch2:.4f} V")
-
-                # Calculate Vrms for Channel 2
-                vrms = self.calculate_vrms(self.data[1])
-                logging.debug(f"Channel 2 Vrms (Vmax - Vmin): {vrms:.4f} V")
-                if self.console:
-                    self.console.append_to_console(f"Channel 2 Vrms (Vmax - Vmin): {vrms:.4f} V")
+                    self.console.append(f"Channel 2 Custom Magnitude: {self.custom_magnitude_ch2:.4f} V")
 
             # Calculate per-cycle metrics and get tacho frequency
             if len(self.data[self.num_channels]) > 0:
-                frequency = self.data[self.num_channels][0]  # Tacho frequency (e.g., 10 Hz)
+                frequency = self.data[self.num_channels][0]  # Tacho frequency
                 self.peak_to_peak_per_cycle, self.custom_magnitude_per_cycle = self.calculate_per_cycle_metrics(frequency)
                 if self.peak_to_peak_per_cycle:
                     avg_peak_to_peak = np.mean(self.peak_to_peak_per_cycle)
                     logging.debug(f"Channel 2 Peak-to-Peak Per Cycle: {self.peak_to_peak_per_cycle}")
                     logging.debug(f"Average Peak-to-Peak Per Cycle: {avg_peak_to_peak:.4f} V")
                     if self.console:
-                        self.console.append_to_console(f"Channel 2 Peak-to-Peak Per Cycle: {[f'{x:.4f}' for x in self.peak_to_peak_per_cycle]} V")
-                        self.console.append_to_console(f"Average Peak-to-Peak Per Cycle: {avg_peak_to_peak:.4f} V")
+                        self.console.append(f"Channel 2 Peak-to-Peak Per Cycle: {[f'{x:.4f}' for x in self.peak_to_peak_per_cycle]} V")
+                        self.console.append(f"Average Peak-to-Peak Per Cycle: {avg_peak_to_peak:.4f} V")
                 if self.custom_magnitude_per_cycle:
                     avg_custom_magnitude = np.mean(self.custom_magnitude_per_cycle)
                     logging.debug(f"Channel 2 Custom Magnitude Per Cycle: {self.custom_magnitude_per_cycle}")
                     logging.debug(f"Average Custom Magnitude Per Cycle: {avg_custom_magnitude:.4f} V")
                     if self.console:
-                        self.console.append_to_console(f"Channel 2 Custom Magnitude Per Cycle: {[f'{x:.4f}' for x in self.custom_magnitude_per_cycle]} V")
-                        self.console.append_to_console(f"Average Custom Magnitude Per Cycle: {avg_custom_magnitude:.4f} V")
+                        self.console.append(f"Channel 2 Custom Magnitude Per Cycle: {[f'{x:.4f}' for x in self.custom_magnitude_per_cycle]} V")
+                        self.console.append(f"Average Custom Magnitude Per Cycle: {avg_custom_magnitude:.4f} V")
 
                 # Update Vrms vs Frequency plot
                 if len(self.data[1]) > 0 and frequency > 0:
                     vrms = self.calculate_vrms(self.data[1])
+                    logging.debug(f"Channel 2 Vrms: {vrms:.4f} V")
+                    if self.console:
+                        self.console.append(f"Channel 2 Vrms: {vrms:.4f} V")
                     if self.last_tacho_freq is None or not np.isclose(self.last_tacho_freq, frequency, rtol=1e-5):
                         self.frequencies.append(frequency)
                         self.vrms_values.append(vrms)
                         self.last_tacho_freq = frequency
                     self.data[self.num_plots-1] = self.vrms_values
                     self.plots[self.num_plots-1].setData(self.frequencies, self.vrms_values)
-                    if self.frequencies:
-                        self.plot_widgets[self.num_plots-1].setXRange(min(self.frequencies), max(self.frequencies), padding=0.05)
-                    if self.vrms_values:
-                        self.plot_widgets[self.num_plots-1].setYRange(min(self.vrms_values), max(self.vrms_values), padding=0.05)
 
-            # Update other plots
-            for ch in range(self.num_channels + 2):
-                times = self.tacho_times if ch >= self.num_channels else self.channel_times
+            # Update plots
+            for ch in range(self.num_channels + 1):
+                times = self.tacho_times if ch == self.num_channels else self.channel_times
                 data = self.data[ch]
                 if len(data) > 0 and len(times) > 0:
                     self.plots[ch].setData(times, data)
                     self.plot_widgets[ch].setXRange(times[0], times[-1], padding=0)
-                    if ch < self.num_channels:
+                    if ch < self.num_channels and self.auto_adjust:
                         self.plot_widgets[ch].enableAutoRange(axis='y')
                     elif ch == self.num_channels:
                         self.plot_widgets[ch].enableAutoRange(axis='y')
-                    elif ch == self.num_channels + 1:
-                        self.plot_widgets[ch].setYRange(0, 1.0, padding=0)
                 else:
                     logging.warning(f"No data for plot {ch}, data_len={len(data)}, times_len={len(times)}")
                     if self.console:
-                        self.console.append_to_console(f"No data for plot {ch}")
-
-            # Add trigger lines for tacho trigger plot
-            if len(self.data[self.num_channels + 1]) > 0:
-                if self.trigger_lines:
-                    for line in self.trigger_lines:
-                        if line:
-                            self.plot_widgets[self.num_channels + 1].removeItem(line)
-                self.trigger_lines = []
-
-                trigger_indices = np.where(self.data[self.num_channels + 1] == 1)[0]
-                logging.debug(f"Tacho trigger indices (value=1): {len(trigger_indices)} points")
-                for idx in trigger_indices:
-                    if idx < len(self.tacho_times):
-                        line = InfiniteLine(
-                            pos=self.tacho_times[idx],
-                            angle=90,
-                            movable=False,
-                            pen=mkPen('k', width=2, style=Qt.SolidLine)
-                        )
-                        self.plot_widgets[self.num_channels + 1].addItem(line)
-                        self.trigger_lines.append(line)
+                        self.console.append(f"No data for plot {ch}")
 
             logging.debug(f"Updated {self.num_plots} plots: {self.channel_samples} channel samples, {self.tacho_samples} tacho samples")
             if self.console:
-                self.console.append_to_console(
-                    f"Time View ({self.model_name}): Updated {self.num_plots} plots with {self.channel_samples} channel samples, {self.tacho_samples} tacho samples"
-                )
+                self.console.append(f"Time View ({self.model_name}): Updated {self.num_plots} plots with {self.channel_samples} channel samples, {self.tacho_samples} tacho samples")
 
         except Exception as e:
             logging.error(f"Error updating plots: {str(e)}")
             if self.console:
-                self.console.append_to_console(f"Error updating plots: {str(e)}")
+                self.console.append(f"Error updating plots: {e}")
 
     def mouse_enter(self, idx):
         """Called when mouse enters plot idx viewport."""
