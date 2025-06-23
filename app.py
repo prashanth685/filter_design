@@ -1,7 +1,11 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTextEdit, QVBoxLayout, QWidget
 from PyQt5.QtCore import pyqtSlot
-from made import TimeViewFeature
+# from made import TimeViewFeature
+# from new import TimeViewFeature
+# from gain import TimeViewFeature
+# from hello import TimeViewFeature
+from updated import TimeViewFeature
 from mqtt_handler import MQTTHandler
 import logging
 

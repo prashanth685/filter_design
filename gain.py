@@ -160,7 +160,7 @@ class TimeViewFeature:
         self.sample_rate = 4096
         self.num_channels = 2  # Only Channel 1 and Channel 2
         self.scaling_factor = 3.3 / 65535
-        self.num_plots = 4  # Channel 1, Channel 2, Vrms vs Tacho Freq, Log-x Plot
+        self.num_plots = 5  # Channel 1, Channel 2, Vrms vs Tacho Freq, Log-x Plot, Gain (dB) for Channel 2
         self.channel_samples = 4096
         self.tacho_samples = 4096
         self.proxies = []
@@ -198,15 +198,17 @@ class TimeViewFeature:
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
 
-        colors = ['r', 'g', 'b', 'k']
+        colors = ['r', 'g', 'b', 'k', 'm']
         for i in range(self.num_plots):
             if i < 2:  # Time-based plots for Channel 1 and 2
                 axis_items = {'bottom': TimeAxisItem(orientation='bottom')}
             elif i == 2:  # Vrms vs Tacho Frequency plot
                 axis_items = None
-            else:  # Log-x plot for Channel 1 and 2
+            elif i == 3:  # Log-x plot for Channel 1 and 2
                 axis_items = {'bottom': AxisItem(orientation='bottom')}
                 axis_items['bottom'].setLogMode(True)
+            else:  # Gain (dB) for Channel 2
+                axis_items = None
             plot_widget = PlotWidget(axisItems=axis_items, background='w')
             plot_widget.setFixedHeight(250)
             plot_widget.setMinimumWidth(0)
@@ -222,6 +224,11 @@ class TimeViewFeature:
                 plot_widget.setLabel('left', 'Magnitude')
                 plot_widget.setLabel('bottom', 'Frequency (Hz)')
                 plot_widget.setXRange(np.log10(0.1), np.log10(1000), padding=0)  # Log scale from 0.1Hz to 1000Hz
+                plot_widget.enableAutoRange(axis='y')
+            elif i == 4:
+                plot_widget.setLabel('left', 'Gain (dB)')
+                plot_widget.setLabel('bottom', 'Frequency (Hz)')
+                plot_widget.setXRange(0, 1000, padding=0)  # Linear scale from 0 to 1000Hz
                 plot_widget.enableAutoRange(axis='y')
             plot_widget.showGrid(x=True, y=True)
             plot_widget.addLegend()
@@ -591,7 +598,7 @@ class TimeViewFeature:
                             self.console.append_to_console(f"Channel 2 Custom Magnitude Per Cycle: {[f'{x:.4f}' for x in self.custom_magnitude_per_cycle]} V")
                             self.console.append_to_console(f"Average Custom Magnitude Per Cycle: {avg_custom_magnitude:.4f} V")
 
-                # Update Log-x Plot for Channel 1 and 2
+                # Update Log-x Plot for Channel 1 and 2 and Gain (dB) Plot for Channel 2
                 if len(self.data[0]) > 0 and len(self.data[1]) > 0:
                     freqs = np.fft.fftfreq(self.channel_samples, d=1/self.sample_rate)
                     positive_freqs = freqs[:self.channel_samples//2]
@@ -602,11 +609,15 @@ class TimeViewFeature:
                         self.plots[3][0].setData(np.log10(valid_freqs), fft_ch1)
                         self.plots[3][1].setData(np.log10(valid_freqs), fft_ch2)
                         self.plot_widgets[3].setXRange(np.log10(0.1), np.log10(1000), padding=0)
-                        logging.debug(f"Updated Log-x plot with {len(valid_freqs)} frequency points")
+                        # Update Gain (dB) Plot for Channel 2
+                        gain_db_ch2 = 20 * np.log10(fft_ch2 + 1e-10)  # Add small offset to avoid log(0)
+                        self.plots[4].setData(valid_freqs, gain_db_ch2)
+                        self.plot_widgets[4].setXRange(0, 1000, padding=0)
+                        logging.debug(f"Updated Log-x plot and Gain (dB) plot with {len(valid_freqs)} frequency points")
                         if self.console:
-                            self.console.append_to_console(f"Updated Log-x plot with {len(valid_freqs)} frequency points")
+                            self.console.append_to_console(f"Updated Log-x plot and Gain (dB) plot with {len(valid_freqs)} frequency points")
 
-            for ch in range(self.num_plots - 2):  # Update only Channel 1 and 2 plots
+            for ch in range(self.num_plots - 3):  # Update only Channel 1 and 2 plots
                 times = self.channel_times
                 data = self.data[ch]
                 if len(data) > 0 and len(times) > 0:
@@ -629,4 +640,3 @@ class TimeViewFeature:
             logging.error(f"Error updating plots: {str(e)}")
             if self.console:
                 self.console.append_to_console(f"Error updating plots: {str(e)}")
-
