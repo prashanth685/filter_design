@@ -1,7 +1,6 @@
 import numpy as np
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea
-from PyQt5.QtCore import Qt, QObject, pyqtSignal, QTimer, QPoint
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QScrollArea, QLabel, QPushButton, QHBoxLayout, QSlider
+from PyQt5.QtCore import QObject, Qt, pyqtSignal, QTimer
 from pyqtgraph import PlotWidget, mkPen, AxisItem
 from datetime import datetime
 import time
@@ -11,7 +10,7 @@ import json
 import struct
 import sys
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class TimeAxisItem(AxisItem):
     def __init__(self, *args, **kwargs):
@@ -32,7 +31,7 @@ class MQTTHandler(QObject):
         self.connected = False
         self.topic = "sarayu/d1/topic1"
         self.model_name = "model1"
-        logging.debug(f"Initializing MQTTHandler with broker={self.broker}, topic={self.topic}")
+        logging.debug(f"Initializing MQTTHandler with broker: {broker}, topic: {self.topic}")
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -45,7 +44,7 @@ class MQTTHandler(QObject):
             self.connection_status.emit(f"Connection failed with code {rc}")
             logging.error(f"Failed to connect to MQTT Broker with code {rc}")
 
-    def on_disconnect(self, client, userdata, _):
+    def on_disconnect(self, client, userdata, rc):
         self.connected = False
         self.connection_status.emit("Disconnected from MQTT Broker")
         logging.info("Disconnected from MQTT Broker")
@@ -53,11 +52,12 @@ class MQTTHandler(QObject):
     def on_message(self, client, userdata, msg):
         try:
             topic = msg.topic
+            payload = msg.payload
+
             if topic != self.topic:
                 logging.debug(f"Ignoring message for topic {topic}, expected {self.topic}")
                 return
 
-            payload = msg.payload
             try:
                 payload_str = payload.decode('utf-8')
                 data = json.loads(payload_str)
@@ -75,9 +75,9 @@ class MQTTHandler(QObject):
 
                 num_samples = payload_length // 2
                 try:
-                    values = struct.unpack(f">{num_samples}H", payload)
+                    values = struct.unpack(f"<{num_samples}H", payload)
                 except struct.error as e:
-                    logging.error(f"Failed to unpack payload of {num_samples} uint16: {str(e)}")
+                    logging.error(f"Failed to unpack payload of {num_samples} uint16_t: {str(e)}")
                     return
 
                 samples_per_channel = 4096
@@ -94,7 +94,7 @@ class MQTTHandler(QObject):
                     for ch in range(num_channels):
                         channel_data[ch].append(values[i + ch])
                 tacho_freq_data = values[samples_per_channel * num_channels:samples_per_channel * num_channels + tacho_samples]
-                tacho_trigger_data = values[samples_per_channel * num_channels + tacho_samples:]
+                tacho_trigger_data = values[samples_per_channel * num_channels + tacho_samples:samples_per_channel * num_channels + tacho_samples * 2]
 
                 values = [[float(v) for v in ch] for ch in channel_data]
                 values.append([float(v) for v in tacho_freq_data])
@@ -102,6 +102,8 @@ class MQTTHandler(QObject):
                 sample_rate = 4096
 
                 logging.debug(f"Parsed binary payload: {num_channels} channels, {len(channel_data[0])} samples/channel")
+                logging.debug(f"Tacho freq (first 5): {tacho_freq_data[:5]}")
+                logging.debug(f"Tacho trigger (first 20): {tacho_trigger_data[:20]}")
 
             self.data_received.emit(self.topic, self.model_name, values, sample_rate)
             logging.debug(f"Emitted data for {self.topic}/{self.model_name}: {len(values)} channels, sample_rate={sample_rate}")
@@ -140,115 +142,115 @@ class MQTTHandler(QObject):
         except Exception as e:
             logging.error(f"Error stopping MQTT client: {str(e)}")
 
-class DualRangeSlider(QWidget):
+class RangeSlider(QWidget):
+    # range_changed = pyqtSignal(int, int)
+
+    # def __init__(self, parent=None):
+    #     super().__init__(parent)
+    #     self.layout = QHBoxLayout()
+    #     self.min_slider = QSlider(Qt.Horizontal)
+    #     self.max_slider = QSlider(Qt.Horizontal)
+    #     self.min_slider.setMinimum(0)
+    #     self.min_slider.setMaximum(4096)
+    #     self.max_slider.setMinimum(0)
+    #     self.max_slider.setMaximum(4096)
+    #     self.min_slider.setValue(0)
+    #     self.max_slider.setValue(4096)
+    #     self.min_slider.setMinimumWidth(200)
+    #     self.max_slider.setMinimumWidth(200)
+    #     self.layout.addWidget(QLabel("Min:"))
+    #     self.layout.addWidget(self.min_slider)
+    #     self.layout.addWidget(QLabel("Max:"))
+    #     self.layout.addWidget(self.max_slider)
+    #     self.setLayout(self.layout)
+    #     self.min_slider.valueChanged.connect(self.update_range)
+    #     self.max_slider.valueChanged.connect(self.update_range)
+
+    # def update_range(self):
+    #     min_val = min(self.min_slider.value(), self.max_slider.value())
+    #     max_val = max(self.min_slider.value(), self.max_slider.value())
+    #     if max_val - min_val < 100:
+    #         if self.sender() == self.min_slider:
+    #             self.min_slider.setValue(max_val - 100)
+    #         else:
+    #             self.max_slider.setValue(min_val + 100)
+    #     self.range_changed.emit(self.min_slider.value(), self.max_slider.value())
+    
     range_changed = pyqtSignal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(300)
-        self.minimum = 0
-        self.maximum = 4096
-        self.lower_value = 0
-        self.upper_value = 4096
-        self.active_handle = None
-        self.setMouseTracking(True)
-        self.lower_label = QLabel("0")
-        self.upper_label = QLabel("4096")
-        layout = QHBoxLayout()
-        layout.addWidget(self.lower_label)
-        layout.addStretch()
-        layout.addWidget(self.upper_label)
-        self.setLayout(layout)
-        self.setStyleSheet("QLabel { font-size: 20px; color: #2f3640; }")
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        self.layout = QHBoxLayout()
+        self.min_slider = QSlider(Qt.Horizontal)
+        self.max_slider = QSlider(Qt.Horizontal)
 
-        groove_y = self.height() // 2
-        groove_x_start = 10
-        groove_x_end = self.width() - 10
-        groove_height = 8
+        # Configure sliders
+        for slider in [self.min_slider, self.max_slider]:
+            slider.setMinimum(0)
+            slider.setMaximum(4096)
+            slider.setMinimumWidth(200)
 
-        painter.setPen(QPen(QColor(187, 187, 187), 1))
-        painter.setBrush(QColor(240, 240, 240))
-        painter.drawRoundedRect(groove_x_start, groove_y - groove_height // 2, groove_x_end - groove_x_start, groove_height, 4, 4)
+        self.min_slider.setValue(0)
+        self.max_slider.setValue(4096)
 
-        lower_pos = self.value_to_position(self.lower_value)
-        upper_pos = self.value_to_position(self.upper_value)
-        painter.setBrush(QBrush(QColor(76, 175, 80)))
-        painter.drawRect(lower_pos, groove_y - groove_height // 2, upper_pos - lower_pos, groove_height)
+        # Labels for value display
+        self.min_value_label = QLabel(f"{self.min_slider.value()}")
+        self.max_value_label = QLabel(f"{self.max_slider.value()}")
 
-        painter.setBrush(QBrush(QColor(33, 150, 243)))
-        painter.setPen(QPen(QColor(50, 50, 50), 1))
-        painter.drawEllipse(QPoint(lower_pos, groove_y), 8, 8)
-        painter.drawEllipse(QPoint(upper_pos, groove_y), 8, 8)
+        # Layout
+        self.layout.addWidget(QLabel("Min:"))
+        self.layout.addWidget(self.min_slider)
+        self.layout.addWidget(self.min_value_label)
 
-    def value_to_position(self, value):
-        range_width = self.width() - 20
-        return 10 + int((value - self.minimum) / (self.maximum - self.minimum) * range_width)
+        self.layout.addWidget(QLabel("Max:"))
+        self.layout.addWidget(self.max_slider)
+        self.layout.addWidget(self.max_value_label)
 
-    def position_to_value(self, pos):
-        range_width = self.width() - 20
-        value = self.minimum + (pos - 10) / range_width * (self.maximum - self.minimum)
-        return int(max(self.minimum, min(self.maximum, value)))
+        self.setLayout(self.layout)
 
-    def mousePressEvent(self, event):
-        pos = event.pos().x()
-        lower_pos = self.value_to_position(self.lower_value)
-        upper_pos = self.value_to_position(self.upper_value)
+        # Connect signals
+        self.min_slider.valueChanged.connect(self.update_range)
+        self.max_slider.valueChanged.connect(self.update_range)
 
-        if abs(pos - lower_pos) < abs(pos - upper_pos):
-            self.active_handle = 'lower'
-        else:
-            self.active_handle = 'upper'
+    def update_range(self):
+        min_val = min(self.min_slider.value(), self.max_slider.value())
+        max_val = max(self.min_slider.value(), self.max_slider.value())
 
-        self.update_slider(event.pos().x())
-
-    def mouseMoveEvent(self, event):
-        if self.active_handle:
-            self.update_slider(event.pos().x())
-
-    def mouseReleaseEvent(self, event):
-        self.active_handle = None
-
-    def update_slider(self, pos):
-        value = self.position_to_value(pos)
-        if self.active_handle == 'lower':
-            if value < self.upper_value - 100:
-                self.lower_value = value
+        if max_val - min_val < 100:
+            if self.sender() == self.min_slider:
+                self.min_slider.setValue(max_val - 100)
             else:
-                self.lower_value = self.upper_value - 100
-        elif self.active_handle == 'upper':
-            if value > self.lower_value + 100:
-                self.upper_value = value
-            else:
-                self.upper_value = self.lower_value + 100
+                self.max_slider.setValue(min_val + 100)
 
-        self.lower_label.setText(str(self.lower_value))
-        self.upper_label.setText(str(self.upper_value))
-        self.update()
-        self.range_changed.emit(self.lower_value, self.upper_value)
+        # Update displayed values
+        self.min_value_label.setText(str(self.min_slider.value()))
+        self.max_value_label.setText(str(self.max_slider.value()))
 
-class TimeViewFeature(QObject):
+        # Emit signal
+        self.range_changed.emit(self.min_slider.value(), self.max_slider.value())
+
+
+class TimeViewFeature:
     def __init__(self, parent, channel=None, model_name="model1", console=None):
-        super().__init__()
         self.parent = parent
         self.channel = channel
         self.model_name = model_name
         self.console = console
-        self.topic = "sarayu/d1/topic1"
         self.widget = None
         self.plot_widgets = []
         self.plots = []
-        self.data = [[] for _ in range(3)]  # Initialize for 3 plots
+        self.data = []
         self.channel_times = []
         self.sample_rate = 4096
         self.num_channels = 2
         self.scaling_factor = 3.3 / 65535
-        self.num_plots = 3
+        self.num_plots = 3  # Channel 1, Channel 2, Gain vs Input Freq
         self.channel_samples = 4096
         self.tacho_samples = 4096
+        self.vrms_ch1 = None
+        self.vrms_ch2 = None
+        self.frequency_ch2 = None
         self.vrms_label = None
         self.frequency_label = None
         self.start_button = None
@@ -272,23 +274,19 @@ class TimeViewFeature(QObject):
 
     def initUI(self):
         self.widget = QWidget()
-        self.widget.setStyleSheet("background-color: #f5f6fa;")
         main_layout = QVBoxLayout()
-
+        
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("border: none; background: transparent;")
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(10)
 
         colors = ['r', 'g', 'b']
         for i in range(self.num_plots):
             axis_items = {'bottom': TimeAxisItem(orientation='bottom') if i < 2 else AxisItem(orientation='bottom')}
             plot_widget = PlotWidget(axisItems=axis_items, background='w')
             plot_widget.setFixedHeight(250)
-            plot_widget.setMinimumWidth(600)
-            plot_widget.setStyleSheet("border: 1px solid #dfe4ea; border-radius: 8px; padding: 5px;")
+            plot_widget.setMinimumWidth(0)
             if i < self.num_channels:
                 plot_widget.setLabel('left', f'CH{i+1} Value (V)')
                 plot_widget.setYRange(0, 3.0, padding=0)
@@ -302,57 +300,38 @@ class TimeViewFeature(QObject):
             pen = mkPen(color=colors[i % len(colors)], width=2)
             plot = plot_widget.plot([], [], pen=pen, name=f'Plot {i+1}')
             self.plots.append(plot)
+            self.data.append([])
             self.plot_widgets.append(plot_widget)
             scroll_layout.addWidget(plot_widget)
 
-        scroll_area.setWidget(scroll_content)
-        main_layout.addWidget(scroll_area)
+        # Range slider
+        self.range_slider = RangeSlider()
+        scroll_layout.addWidget(QLabel("Data Range Selection:"))
+        scroll_layout.addWidget(self.range_slider)
 
-        bottom_layout = QVBoxLayout()
-
-        self.range_slider = DualRangeSlider()
-        range_label = QLabel("Data Range Selection:")
-        range_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2f3640;")
-        bottom_layout.addWidget(range_label)
-        bottom_layout.addWidget(self.range_slider)
-
+        # Frequency selection buttons
         freq_layout = QHBoxLayout()
-        freq_layout.setSpacing(8)
-        freq_label = QLabel("Frequency Range (Hz):")
-        freq_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2f3640;")
-        freq_layout.addWidget(freq_label)
+        freq_layout.addWidget(QLabel("Frequency Range (Hz):"))
         for freq in [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]:
             btn = QPushButton(f"{freq} Hz")
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #FF5722;
-                    color: white;
-                    padding: 8px 12px;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-                QPushButton:hover { background-color: #E64A19; }
-                QPushButton:pressed { background-color: #D84315; }
-            """)
+            btn.setStyleSheet("background-color: #FF5722; color: white; padding: 8px; border-radius: 4px;")
             freq_layout.addWidget(btn)
             self.freq_buttons.append(btn)
-        bottom_layout.addLayout(freq_layout)
+        scroll_layout.addLayout(freq_layout)
 
+        # Labels
         self.vrms_label = QLabel("Channel 1 Vrms: N/A | Channel 2 Vrms: N/A")
-        self.vrms_label.setStyleSheet("font-size: 14px; color: #2f3640; background-color: #dfe4ea; padding: 8px; border-radius: 6px;")
         self.frequency_label = QLabel("Channel 2 Frequency: N/A")
-        self.frequency_label.setStyleSheet("font-size: 14px; color: #2f3640; background-color: #dfe4ea; padding: 8px; border-radius: 6px;")
-        bottom_layout.addWidget(self.vrms_label)
-        bottom_layout.addWidget(self.frequency_label)
+        scroll_layout.addWidget(self.vrms_label)
+        scroll_layout.addWidget(self.frequency_label)
 
+        # Button layout
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        button_layout.setSpacing(10)
-        self.start_button = QPushButton("Start MQTT")
-        self.stop_button = QPushButton("Stop MQTT")
-        self.clear_gain_button = QPushButton("Clear Gain Plot")
-        self.y_range_3v_button = QPushButton("3V Range")
+        self.start_button = QPushButton("Start MQTT Plotting")
+        self.stop_button = QPushButton("Stop MQTT Plotting")
+        self.clear_gain_button = QPushButton("Clear Gain vs Input Freq Plot")
+        self.y_range_3v_button = QPushButton("Set 3V Range")
         self.y_range_auto_button = QPushButton("Auto Y Range")
         self.default_button = QPushButton("Default Settings")
 
@@ -361,26 +340,12 @@ class TimeViewFeature(QObject):
         self.clear_gain_button.setEnabled(True)
         self.y_range_auto_button.setEnabled(False)
 
-        button_style = """
-            QPushButton {
-                background-color: %s;
-                color: %s;
-                padding: 10px 15px;
-                border-radius: 8px;
-                font-size: 13px;
-                font-weight: bold;
-                border: none;
-            }
-            QPushButton:hover { background-color: %s; }
-            QPushButton:pressed { background-color: %s; }
-            QPushButton:disabled { background-color: #dcdde1; color: #7f8c8d; }
-        """
-        self.start_button.setStyleSheet(button_style % ("#4CAF50", "white", "#45a049", "#3d8b40"))
-        self.stop_button.setStyleSheet(button_style % ("#f44336", "white", "#e53935", "#d32f2f"))
-        self.clear_gain_button.setStyleSheet(button_style % ("#2196F3", "white", "#1e88e5", "#1976d2"))
-        self.y_range_3v_button.setStyleSheet(button_style % ("#FFC107", "black", "#FFB300", "#FFA000"))
-        self.y_range_auto_button.setStyleSheet(button_style % ("#FFC107", "black", "#FFB300", "#FFA000"))
-        self.default_button.setStyleSheet(button_style % ("#9C27B0", "white", "#8e24aa", "#7b1fa2"))
+        self.start_button.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; border-radius: 4px;")
+        self.stop_button.setStyleSheet("background-color: #f44336; color: white; padding: 8px; border-radius: 4px;")
+        self.clear_gain_button.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; border-radius: 4px;")
+        self.y_range_3v_button.setStyleSheet("background-color: #FFC107; color: black; padding: 8px; border-radius: 4px;")
+        self.y_range_auto_button.setStyleSheet("background-color: #FFC107; color: black; padding: 8px; border-radius: 4px;")
+        self.default_button.setStyleSheet("background-color: #9C27B0; color: white; padding: 8px; border-radius: 4px;")
 
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
@@ -389,8 +354,9 @@ class TimeViewFeature(QObject):
         button_layout.addWidget(self.y_range_auto_button)
         button_layout.addWidget(self.default_button)
 
-        bottom_layout.addLayout(button_layout)
-        main_layout.addLayout(bottom_layout)
+        scroll_layout.addLayout(button_layout)
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area)
         self.widget.setLayout(main_layout)
 
         if not self.model_name and self.console:
@@ -416,7 +382,7 @@ class TimeViewFeature(QObject):
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.clear_gain_button.setEnabled(True)
-        logging.info("Started plotting MQTT data")
+        logging.debug("Started plotting MQTT data")
         if self.console:
             self.console.append_to_console("Started plotting MQTT data")
 
@@ -425,7 +391,7 @@ class TimeViewFeature(QObject):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.clear_gain_button.setEnabled(True)
-        logging.info("Stopped plotting MQTT data")
+        logging.debug("Stopped plotting MQTT data")
         if self.console:
             self.console.append_to_console("Stopped plotting MQTT data")
 
@@ -435,7 +401,7 @@ class TimeViewFeature(QObject):
         self.plots[2].setData([], [])
         self.plot_widgets[2].setXRange(self.input_freq_range[0], self.input_freq_range[1], padding=0)
         self.plot_widgets[2].setYRange(10, -85, padding=0)
-        logging.info("Cleared Gain vs Input Frequency plot")
+        logging.debug("Cleared Gain vs Input Frequency plot")
         if self.console:
             self.console.append_to_console("Cleared Gain vs Input Frequency plot")
 
@@ -446,7 +412,7 @@ class TimeViewFeature(QObject):
         for i in range(self.num_channels):
             self.plot_widgets[i].setYRange(0, 3.0, padding=0)
         self.plot_widgets[2].setYRange(10, -85, padding=0)
-        logging.info("Set Y-axis to 0-3V for Channel 1 and 2")
+        logging.debug("Set Y-axis to 0-3V for Channel 1 and 2")
         if self.console:
             self.console.append_to_console("Set Y-axis to 0-3V for Channel 1 and 2")
 
@@ -457,7 +423,7 @@ class TimeViewFeature(QObject):
         for i in range(self.num_channels):
             self.plot_widgets[i].enableAutoRange(axis='y')
         self.plot_widgets[2].enableAutoRange(axis='y')
-        logging.info("Enabled auto Y-axis range for Channel 1 and 2")
+        logging.debug("Enabled auto Y-axis range for Channel 1 and 2")
         if self.console:
             self.console.append_to_console("Enabled auto Y-axis range for Channel 1 and 2")
 
@@ -465,7 +431,7 @@ class TimeViewFeature(QObject):
         self.input_freq_range = [0, freq]
         self.plot_widgets[2].setXRange(0, freq, padding=0)
         self.apply_ranges()
-        logging.info(f"Set Input Frequency range to 0-{freq}Hz")
+        logging.debug(f"Set Input Frequency range to 0-{freq}Hz")
         if self.console:
             self.console.append_to_console(f"Set Input Frequency range to 0-{freq}Hz")
 
@@ -473,7 +439,7 @@ class TimeViewFeature(QObject):
         self.data_range_start = start
         self.data_range_end = end
         self.apply_data_range()
-        logging.info(f"Data range updated to {start}-{end}")
+        logging.debug(f"Data range updated to {start}-{end}")
         if self.console:
             self.console.append_to_console(f"Data range updated to {start}-{end}")
 
@@ -497,27 +463,28 @@ class TimeViewFeature(QObject):
                 self.vrms_label.setText(f"Channel 1 Vrms: {vrms_ch1:.2f} V | Channel 2 Vrms: {vrms_ch2:.2f} V")
                 self.frequency_label.setText(f"Channel 2 Frequency: {frequency_ch2:.2f} Hz")
                 if input_frequency > 0 and self.input_freq_range[0] <= input_frequency <= self.input_freq_range[1]:
+                    # Clear previous data to avoid accumulation
                     if len(self.gain_vs_freq_data['input_freq']) == 0 or self.gain_vs_freq_data['input_freq'][-1] != input_frequency:
                         self.gain_vs_freq_data['gain'].append(gain_db)
                         self.gain_vs_freq_data['input_freq'].append(input_frequency)
-                        logging.debug(f"Appended gain: {gain_db:.2f} dB at {input_frequency:.2f} Hz")
+                        logging.debug(f"Appended Gain: {gain_db:.2f} dB at Input Freq: {input_frequency:.2f} Hz")
                     self.apply_ranges()
 
     def apply_ranges(self):
         filtered_gain = []
-        filtered_freq = []
-        for g, freq in zip(self.gain_vs_freq_data['gain'], self.gain_vs_freq_data['input_freq']):
-            if self.input_freq_range[0] <= freq <= self.input_freq_range[1]:
+        filtered_input_freq = []
+        for g, f in zip(self.gain_vs_freq_data['gain'], self.gain_vs_freq_data['input_freq']):
+            if self.input_freq_range[0] <= f <= self.input_freq_range[1]:
                 filtered_gain.append(g)
-                filtered_freq.append(freq)
-        if len(filtered_freq) > 0:
-            self.plots[2].setData(filtered_freq, filtered_gain)
+                filtered_input_freq.append(f)
+        if len(filtered_input_freq) > 0:
+            self.plots[2].setData(filtered_input_freq, filtered_gain)
         else:
             self.plots[2].setData([], [])
-        self.plot_widgets[2].setYRange(10, -85, padding=0)
         self.plot_widgets[2].setXRange(self.input_freq_range[0], self.input_freq_range[1], padding=0)
+        self.plot_widgets[2].setYRange(10, -85, padding=0)
 
-        logging.debug(f"Applied ranges: Input Freq {self.input_freq_range}, {len(filtered_freq)} points plotted")
+        logging.debug(f"Applied ranges: Input Freq {self.input_freq_range}, {len(filtered_input_freq)} points plotted")
         if self.console:
             self.console.append_to_console(f"Applied ranges: Input Freq {self.input_freq_range}")
 
@@ -531,15 +498,13 @@ class TimeViewFeature(QObject):
         self.input_freq_range = [0, 1000]
         self.data_range_start = 0
         self.data_range_end = 4096
-        self.range_slider.lower_value = 0
-        self.range_slider.upper_value = 4096
-        self.range_slider.lower_label.setText("0")
-        self.range_slider.upper_label.setText("4096")
+        self.range_slider.min_slider.setValue(0)
+        self.range_slider.max_slider.setValue(4096)
         self.gain_vs_freq_data['gain'] = []
         self.gain_vs_freq_data['input_freq'] = []
         self.apply_ranges()
         self.apply_data_range()
-        logging.info("Default settings applied")
+        logging.debug("Default settings applied")
         if self.console:
             self.console.append_to_console("Default settings applied")
 
@@ -559,7 +524,7 @@ class TimeViewFeature(QObject):
         data = data - np.mean(data)
         n = len(data)
         fft_result = np.fft.fft(data)
-        freqs = np.fft.fftfreq(n, d=1.0 / sample_rate)
+        freqs = np.fft.fftfreq(n, d=1/sample_rate)
         magnitudes = np.abs(fft_result)
         positive_freqs = freqs[:n//2]
         positive_magnitudes = magnitudes[:n//2]
@@ -576,21 +541,21 @@ class TimeViewFeature(QObject):
 
     def on_data_received(self, tag_name, model_name, values, sample_rate):
         if not self.is_plotting:
-            logging.debug("Plotting disabled, ignoring MQTT data")
+            logging.debug("Plotting is disabled, ignoring MQTT data")
             return
-        if tag_name != self.topic:
-            logging.debug(f"Ignoring data for topic {tag_name}, expected {self.topic}")
+        if tag_name != "sarayu/d1/topic1":
+            logging.debug(f"Ignoring data for topic {tag_name}, expected sarayu/d1/topic1")
             return
         if self.model_name != model_name:
             logging.debug(f"Ignoring data for model {model_name}, expected {self.model_name}")
             return
 
-        logging.info(f"Processing MQTT data: {len(values)} channels, sample_rate={sample_rate}")
+        logging.debug(f"Processing MQTT data: {len(values)} channels, sample_rate={sample_rate}")
         try:
             if not values or len(values) != 6:
-                logging.error(f"Received incorrect number of sublists: {len(values)}, expected 6")
+                logging.warning(f"Received incorrect number of sublists: {len(values)}, expected 6")
                 if self.console:
-                    self.console.append_to_console(f"Error: Received incorrect number of values: {len(values)}")
+                    self.console.append_to_console(f"Received incorrect number of sublists: {len(values)}")
                 return
 
             self.sample_rate = sample_rate
@@ -599,29 +564,29 @@ class TimeViewFeature(QObject):
 
             for ch in range(4):
                 if len(values[ch]) != self.channel_samples:
-                    logging.error(f"Channel {ch+1} has {len(values[ch])} samples, expected {self.channel_samples}")
+                    logging.warning(f"Channel {ch+1} has {len(values[ch])} samples, expected {self.channel_samples}")
                     if self.console:
-                        self.console.append_to_console(f"Error: Channel {ch+1} samples {len(values[ch])}")
+                        self.console.append_to_console(f"Channel {ch+1} sample mismatch: {len(values[ch])}")
                     return
             if len(values[4]) != self.tacho_samples or len(values[5]) != self.tacho_samples:
-                logging.error(f"Tacho data length mismatch: freq={len(values[4])}, trigger={len(values[5])}, expected={self.tacho_samples}")
+                logging.warning(f"Tacho data length mismatch: freq={len(values[4])}, trigger={len(values[5])}, expected={self.tacho_samples}")
                 if self.console:
-                    self.console.append_to_console(f"Error: Tacho data length mismatch: freq={len(values[4])}, trigger={len(values[5])}")
+                    self.console.append_to_console(f"Tacho data length mismatch: freq={len(values[4])}, trigger={len(values[5])}")
                 return
 
             current_time = time.time()
-            channel_time_step = 1.0 / self.sample_rate
+            channel_time_step = 1.0 / sample_rate
             self.channel_times = np.array([current_time - (self.channel_samples - 1 - i) * channel_time_step for i in range(self.channel_samples)])
 
             self.data[0] = np.array(values[0][:self.channel_samples]) * self.scaling_factor
             self.data[1] = np.array(values[1][:self.channel_samples]) * self.scaling_factor
-            self.data[2] = np.array(values[4][:self.tacho_samples]) / 100.0
+            self.data[2] = np.array(values[4][:self.tacho_samples]) / 100  # Store tacho_freq for potential use
 
             self.apply_data_range()
 
-            logging.info(f"Updated {self.num_plots} plots with {self.channel_samples} samples")
+            logging.debug(f"Updated {self.num_plots} plots: {self.channel_samples} channel samples")
             if self.console:
-                self.console.append_to_console(f"Time View ({self.model_name}): Updated {self.num_plots} plots with {self.channel_samples} samples")
+                self.console.append_to_console(f"Time View ({self.model_name}): Updated {self.num_plots} plots with {self.channel_samples} channel samples")
 
         except Exception as e:
             logging.error(f"Error updating plots: {str(e)}")
