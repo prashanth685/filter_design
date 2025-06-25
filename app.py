@@ -6,7 +6,8 @@ from PyQt5.QtCore import pyqtSlot
 # from gain import TimeViewFeature
 # from hello import TimeViewFeature
 # from updated import TimeViewFeature
-from okayed import TimeViewFeature
+from freq import TimeViewFeature
+# from okayed import TimeViewFeature
 from mqtt_handler import MQTTHandler
 import logging
 
