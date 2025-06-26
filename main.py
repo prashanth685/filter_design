@@ -6,7 +6,8 @@ from PyQt5.QtCore import pyqtSlot
 # from gain import TimeViewFeature
 # from hello import TimeViewFeature
 # from updated import TimeViewFeature
-from freq import TimeViewFeature
+# from freq import TimeViewFeature
+from modern import TimeViewFeature
 # from okayed import TimeViewFeature
 from mqtt_handler import MQTTHandler
 import logging
@@ -27,6 +28,7 @@ class MainWindow(QMainWindow):
         # Initialize TimeViewFeature with model_name="model1"
         self.time_view = TimeViewFeature(self, model_name="model1")
         layout.addWidget(self.time_view.get_widget())
+
 
 
         # Initialize MQTTHandler

@@ -3,11 +3,12 @@ from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 import struct
 import json
 import logging
+import uuid
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class MQTTHandler(QObject):
-    data_received = pyqtSignal(str, str, list, int)  # tag_name, model_name, values, sample_rate
+    data_received = pyqtSignal(str, str, list, int, int)  # tag_name, model_name, values, sample_rate, samples_per_channel
     connection_status = pyqtSignal(str)
 
     def __init__(self, broker="192.168.1.232", port=1883):
@@ -50,11 +51,12 @@ class MQTTHandler(QObject):
                 payload_str = payload.decode('utf-8')
                 data = json.loads(payload_str)
                 values = data.get("values", [])
-                sample_rate = data.get("sample_rate", 4096)
-                if not isinstance(values, list) or not values:
+                sample_rate = data.get("sample_rate", 0)
+                samples_per_channel = data.get("samples_per_channel", 0)
+                if not isinstance(values, list) or not values or sample_rate <= 0 or samples_per_channel <= 0:
                     logging.warning(f"Invalid JSON payload format: {payload_str}")
                     return
-                logging.debug(f"Parsed JSON payload: {len(values)} channels")
+                logging.debug(f"Parsed JSON payload: {len(values)} channels, sample_rate={sample_rate}, samples_per_channel={samples_per_channel}")
             except (UnicodeDecodeError, json.JSONDecodeError):
                 payload_length = len(payload)
                 if payload_length < 20 or payload_length % 2 != 0:
@@ -76,12 +78,12 @@ class MQTTHandler(QObject):
                 total_values = values[100:]
 
                 num_channels = header[2] if len(header) > 2 and header[2] > 0 else 4
-                sample_rate = header[3] if len(header) > 3 and header[3] > 0 else 4096
-                samples_per_channel = 4096
+                sample_rate = header[3] if len(header) > 3 and header[3] > 0 else 1000
+                samples_per_channel = header[4] if len(header) > 4 and header[4] > 0 else 1000
                 num_tacho_channels = header[6] if len(header) > 6 and header[6] > 0 else 2
 
                 expected_main = samples_per_channel * num_channels
-                expected_tacho = 4096 * num_tacho_channels
+                expected_tacho = samples_per_channel * num_tacho_channels
                 expected_total = expected_main + expected_tacho
 
                 if len(total_values) != expected_total:
@@ -89,8 +91,8 @@ class MQTTHandler(QObject):
                     return
 
                 main_data = total_values[:expected_main]
-                tacho_freq_data = total_values[expected_main:expected_main + 4096]
-                tacho_trigger_data = total_values[expected_main + 4096:expected_main + 8192]
+                tacho_freq_data = total_values[expected_main:expected_main + samples_per_channel]
+                tacho_trigger_data = total_values[expected_main + samples_per_channel:expected_main + 2 * samples_per_channel]
 
                 channel_data = [[] for _ in range(num_channels)]
                 for i in range(0, len(main_data), num_channels):
@@ -105,8 +107,8 @@ class MQTTHandler(QObject):
                 logging.debug(f"Tacho freq (first 5): {tacho_freq_data[:5]}")
                 logging.debug(f"Tacho trigger (first 20): {tacho_trigger_data[:20]}")
 
-            self.data_received.emit(self.topic, self.model_name, values, sample_rate)
-            logging.debug(f"Emitted data for {self.topic}/{self.model_name}: {len(values)} channels, sample_rate={sample_rate}")
+            self.data_received.emit(self.topic, self.model_name, values, sample_rate, samples_per_channel)
+            logging.debug(f"Emitted data for {self.topic}/{self.model_name}: {len(values)} channels, sample_rate={sample_rate}, samples_per_channel={samples_per_channel}")
 
         except Exception as e:
             logging.error(f"Error processing MQTT message: {str(e)}")
@@ -121,7 +123,7 @@ class MQTTHandler(QObject):
 
     def start(self):
         try:
-            self.client = mqtt.Client()
+            self.client = mqtt.Client(client_id=f"client-{uuid.uuid4()}")
             self.client.on_connect = self.on_connect
             self.client.on_disconnect = self.on_disconnect
             self.client.on_message = self.on_message
