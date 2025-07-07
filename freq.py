@@ -605,7 +605,7 @@ class TimeViewFeature(QObject):
 
             self.data[0] = np.array(values[0][:self.channel_samples]) * self.scaling_factor
             self.data[1] = np.array(values[1][:self.channel_samples]) * self.scaling_factor
-            self.data[2] = np.array(values[4][:self.tacho_samples]) / 100.0
+            self.data[2] = np.array(values[4][:self.tacho_samples]) / 100
 
             self.apply_data_range()
 

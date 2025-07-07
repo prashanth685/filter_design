@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MQTT FFT Plot")
+        self.setWindowTitle("Filter Design")
         self.resize(1200, 800)  # Increased size for better plot visibility
 
         # Central widget with layout

@@ -1,5 +1,7 @@
 import numpy as np
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QSlider
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QSlider, QLineEdit
+from PyQt5.QtGui import QFont
+
 from PyQt5.QtCore import QObject, Qt, pyqtSignal, QTimer
 from pyqtgraph import PlotWidget, mkPen, AxisItem
 from datetime import datetime
@@ -21,7 +23,7 @@ class TimeAxisItem(AxisItem):
         return [datetime.fromtimestamp(v).strftime('%Y-%m-%d\n%H:%M:%S') for v in values]
 
 class MQTTHandler(QObject):
-    data_received = pyqtSignal(str, str, list, int, int)  # tag_name, model_name, values, sample_rate, samples_per_channel
+    data_received = pyqtSignal(str, str, list, int, int)
     connection_status = pyqtSignal(str)
 
     def __init__(self, broker="192.168.1.232", port=1883):
@@ -60,7 +62,6 @@ class MQTTHandler(QObject):
                 return
 
             try:
-                # Attempt JSON decode
                 payload_str = payload.decode('utf-8')
                 data = json.loads(payload_str)
                 values = data.get("values", [])
@@ -80,7 +81,7 @@ class MQTTHandler(QObject):
                 try:
                     values = struct.unpack(f"<{num_samples}H", payload)
                 except struct.error as e:
-                    logging.error(f"Failed to unpack payload of {num_samples} uint16_t: {str(e)}")
+                    logging.error(f"Failed to unpack payload of {num_samples} int16_t: {str(e)}")
                     return
 
                 if len(values) < 100:
@@ -177,10 +178,20 @@ class RangeSlider(QWidget):
         self.min_value_label = QLabel(f"{self.min_slider.value()}")
         self.max_value_label = QLabel(f"{self.max_slider.value()}")
 
-        self.layout.addWidget(QLabel("Min:"))
+        label=QLabel("Min::")
+        font = QFont()
+        font.setPointSize(10)  # This uses points, not pixels
+        label.setFont(font)
+        self.layout.addWidget(label)
         self.layout.addWidget(self.min_slider)
         self.layout.addWidget(self.min_value_label)
-        self.layout.addWidget(QLabel("Max:"))
+        # self.layout.addWidget(QLabel("Max:"))
+        label=QLabel("Max::")
+        font = QFont()
+        font.setPointSize(10)  # This uses points, not pixels
+        label.setFont(font)
+        self.layout.addWidget(label)
+
         self.layout.addWidget(self.max_slider)
         self.layout.addWidget(self.max_value_label)
         self.setLayout(self.layout)
@@ -237,7 +248,8 @@ class TimeViewFeature:
         self.data_range_start = 0
         self.data_range_end = 1000
         self.range_slider = None
-        self.freq_buttons = []
+        self.freq_input = None
+        self.set_freq_button = None
         self.initUI()
         self.connect_buttons()
         logging.debug("TimeViewFeature initialized with plotting enabled")
@@ -246,24 +258,24 @@ class TimeViewFeature:
         self.widget = QWidget()
         main_layout = QHBoxLayout()
 
-        # Main content
         content_widget = QWidget()
         content_layout = QVBoxLayout()
 
-        # Plot area
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
 
         colors = ['r', 'g', 'b']
+        channel_labels = ['CH1 Input (V)', 'CH2 Output (V)']
+
         for i in range(self.num_plots):
             axis_items = {'bottom': TimeAxisItem(orientation='bottom') if i < 2 else AxisItem(orientation='bottom')}
             plot_widget = PlotWidget(axisItems=axis_items, background='w')
             plot_widget.setFixedHeight(250)
-            plot_widget.setMinimumWidth(0)
-            if i < self.num_channels:
-                plot_widget.setLabel('left', f'CH{i+1} Value (V)')
+            plot_widget.setMinimumWidth(250)
+            if i < len(channel_labels):
+                plot_widget.setLabel('left', channel_labels[i])
                 plot_widget.setYRange(0, 3.0, padding=10)
             elif i == 2:
                 plot_widget.setLabel('left', 'Gain (dB)')
@@ -282,32 +294,63 @@ class TimeViewFeature:
         scroll_area.setWidget(scroll_content)
         content_layout.addWidget(scroll_area)
 
-        # Ball controls (fixed, not scrollable)
         bottom_controls = QWidget()
         control_layout = QVBoxLayout()
 
-        # Range slider
         self.range_slider = RangeSlider(max_samples=self.samples_per_channel)
-        control_layout.addWidget(QLabel("Data Range Selection:"))
+        # control_layout.addWidget(QLabel("Data Range Selection:"))
+        label=QLabel("Data Range Selection::")
+        font = QFont()
+        font.setPointSize(10)  # This uses points, not pixels
+        label.setFont(font)
+        control_layout.addWidget(label)
         control_layout.addWidget(self.range_slider)
 
-        # Frequency selection buttons
         freq_layout = QHBoxLayout()
-        freq_layout.addWidget(QLabel("Frequency Range (Hz):"))
-        for freq in [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]:
-            btn = QPushButton(f"{freq} Hz")
-            btn.setStyleSheet("background-color: #FF5722; color: white; padding: 8px; border-radius: 4px;")
-            freq_layout.addWidget(btn)
-            self.freq_buttons.append(btn)
+        # freq_layout.addWidget(QLabel("Frequency Range (Hz):"))
+        label = QLabel("Frequency Range (Hz):")
+        font = QFont()
+        font.setPointSize(10)  # This uses points, not pixels
+        label.setFont(font)
+        freq_layout.addWidget(label)
+        self.freq_input = QLineEdit("1000")
+        self.freq_input.setPlaceholderText("Enter frequency (Hz)")
+        self.freq_input.setFixedWidth(200)
+        self.freq_input.setFixedHeight(50)
+        self.set_freq_button = QPushButton("Set Frequency")
+        # self.set_freq_button.setStyleSheet("background-color: #FF5722; color: white; padding: 10px; border-radius: 4px;")
+        self.set_freq_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FF5722;  /* Deep orange */
+                color: white;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:pressed {
+                background-color: #BF360C;  /* Much darker deep orange */
+            }
+        """)
+
+        freq_layout.addWidget(self.freq_input)
+        freq_layout.addWidget(self.set_freq_button)
+        freq_layout.addStretch()
         control_layout.addLayout(freq_layout)
+        info_layout = QHBoxLayout()
 
-        # Labels
-        self.vrms_label = QLabel("Channel 1 Vrms: N/A | Channel 2 Vrms: N/A")
-        self.frequency_label = QLabel("Channel 2 Frequency: N/A")
-        control_layout.addWidget(self.vrms_label)
-        control_layout.addWidget(self.frequency_label)
+        self.vrms_label = QLabel("INPUT Vrms: N/A | OUTPUT 2 Vrms: N/A")
+        self.vrms_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
 
-        # Button layout
+        self.frequency_label = QLabel("OUTPUT FREQUENCY: N/A")
+        self.frequency_label.setStyleSheet("font-weight: bold; font-size: 10pt;")
+
+        # Add both labels to the horizontal layout
+        info_layout.addWidget(self.vrms_label)
+        info_layout.addWidget(self.frequency_label)
+
+        # Add the horizontal layout to your control_layout
+        control_layout.addLayout(info_layout)
+
+
         button_layout = QHBoxLayout()
         self.start_button = QPushButton("Start MQTT Plotting")
         self.stop_button = QPushButton("Stop MQTT Plotting")
@@ -321,12 +364,84 @@ class TimeViewFeature:
         self.clear_gain_button.setEnabled(True)
         self.y_range_auto_button.setEnabled(False)
 
-        self.start_button.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; border-radius: 4px;")
-        self.stop_button.setStyleSheet("background-color: #f44336; color: white; padding: 8px; border-radius: 4px;")
-        self.clear_gain_button.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; border-radius: 4px;")
-        self.y_range_3v_button.setStyleSheet("background-color: #FFC107; color: black; padding: 8px; border-radius: 4px;")
-        self.y_range_auto_button.setStyleSheet("background-color: #FFC107; color: black; padding: 8px; border-radius: 4px;")
-        self.default_button.setStyleSheet("background-color: #9C27B0; color: white; padding: 8px; border-radius: 4px;")
+        # self.start_button.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; border-radius: 4px;")
+        # self.stop_button.setStyleSheet("background-color: #f44336; color: white; padding: 10px; border-radius: 4px;")
+        # self.clear_gain_button.setStyleSheet("background-color: #2196F3; color: white; padding: 10px; border-radius: 4px;")
+        # self.y_range_3v_button.setStyleSheet("background-color: #FFC107; color: black; padding: 10px; border-radius: 4px;")
+        # self.y_range_auto_button.setStyleSheet("background-color: #FFC107; color: black; padding: 10px; border-radius: 4px;")
+        # self.default_button.setStyleSheet("background-color: #9C27B0; color: white; padding: 10px; border-radius: 4px;")
+
+        self.start_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:pressed {
+                background-color: #2E7D32;  /* Much darker green */
+            }
+        """)
+
+        self.stop_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:pressed {
+                background-color: #B71C1C;  /* Dark red */
+            }
+        """)
+
+        self.clear_gain_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;  /* Dark blue */
+            }
+        """)
+
+        self.y_range_3v_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FFC107;
+                color: black;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:pressed {
+                background-color: #FF6F00;  /* Dark amber */
+            }
+        """)
+
+        self.y_range_auto_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FFC107;
+                color: black;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:pressed {
+                background-color: #FF6F00;
+            }
+        """)
+
+        self.default_button.setStyleSheet("""
+            QPushButton {
+                background-color: #9C27B0;
+                color: white;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            QPushButton:pressed {
+                background-color: #4A148C;  /* Dark purple */
+            }
+        """)
 
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
@@ -356,9 +471,7 @@ class TimeViewFeature:
         self.y_range_auto_button.clicked.connect(self.set_auto_y_range)
         self.default_button.clicked.connect(self.set_default_settings)
         self.range_slider.range_changed.connect(self.update_data_range)
-        for idx, btn in enumerate(self.freq_buttons):
-            freq = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000][idx]
-            btn.clicked.connect(lambda checked, f=freq: self.set_input_freq_range(f))
+        self.set_freq_button.clicked.connect(self.set_input_freq_from_input)
         logging.debug("Button signals connected")
 
     def start_plotting(self):
@@ -411,13 +524,21 @@ class TimeViewFeature:
         if self.console:
             self.console.append_to_console("Enabled auto Y-axis range for Channel 1 and 2")
 
-    def set_input_freq_range(self, freq):
-        self.input_freq_range = [0, freq]
-        self.plot_widgets[2].setXRange(0, freq, padding=0)
-        self.apply_ranges()
-        logging.debug(f"Set Input Frequency range to 0-{freq}Hz")
-        if self.console:
-            self.console.append_to_console(f"Set Input Frequency range to 0-{freq}Hz")
+    def set_input_freq_from_input(self):
+        try:
+            freq = float(self.freq_input.text())
+            if freq <= 0:
+                raise ValueError("Frequency must be positive")
+            self.input_freq_range = [0, freq]
+            self.plot_widgets[2].setXRange(0, freq, padding=0)
+            self.apply_ranges()
+            logging.debug(f"Set Input Frequency range to 0-{freq}Hz")
+            if self.console:
+                self.console.append_to_console(f"Set Input Frequency range to 0-{freq}Hz")
+        except ValueError as e:
+            logging.error(f"Invalid frequency input: {str(e)}")
+            if self.console:
+                self.console.append_to_console(f"Invalid frequency input: {str(e)}")
 
     def update_data_range(self, start, end):
         self.data_range_start = start
@@ -444,7 +565,10 @@ class TimeViewFeature:
                 frequency_ch2 = self.calculate_frequency(sliced_data_ch2, self.sample_rate)
                 input_frequency = self.calculate_frequency(sliced_data_ch1, self.sample_rate)
                 gain_db = self.calculate_gain(vrms_ch1, vrms_ch2)
-                self.vrms_label.setText(f"Channel 1 Vrms: {vrms_ch1:.2f} V | Channel 2 Vrms: {vrms_ch2:.2f} V")
+                # self.vrms_label.setText(f"Channel 1 Vrms: {vrms_ch1:.2f} V | Channel 2 Vrms: {vrms_ch2:.2f} V")
+                self.vrms_label.setText(f"INPUT Vrms: {vrms_ch1:.2f} V | OUTPUT 2 Vrms: {vrms_ch2:.2f} V")
+                
+                
                 self.frequency_label.setText(f"Channel 2 Frequency: {frequency_ch2:.2f} Hz")
                 if input_frequency > 0 and self.input_freq_range[0] <= input_frequency <= self.input_freq_range[1]:
                     if len(self.gain_vs_freq_data['input_freq']) == 0 or self.gain_vs_freq_data['input_freq'][-1] != input_frequency:
@@ -484,6 +608,7 @@ class TimeViewFeature:
         self.range_slider.max_slider.setValue(self.samples_per_channel)
         self.gain_vs_freq_data['gain'] = []
         self.gain_vs_freq_data['input_freq'] = []
+        self.freq_input.setText("1000")
         self.apply_ranges()
         self.apply_data_range()
         logging.debug("Default settings applied")
@@ -544,7 +669,6 @@ class TimeViewFeature:
             self.samples_per_channel = samples_per_channel
             self.tacho_samples = samples_per_channel
             self.range_slider.update_maximum(samples_per_channel)
-            # Adjust data_range_end only if it exceeds the new samples_per_channel
             if self.data_range_end > samples_per_channel:
                 self.data_range_end = samples_per_channel
                 self.data_range_start = 0

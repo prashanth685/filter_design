@@ -66,6 +66,9 @@ class MQTTHandler(QObject):
                 num_samples = payload_length // 2
                 try:
                     values = struct.unpack(f"<{num_samples}H", payload)
+                    print("Min value:", min(values), "Max value:", max(values))
+
+                    # logging.debug(f"values printed by me {values[0:4096]}")
                 except struct.error as e:
                     logging.error(f"Failed to unpack payload of {num_samples} int16_t: {str(e)}")
                     return
